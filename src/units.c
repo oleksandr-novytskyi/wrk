@@ -75,11 +75,11 @@ static int scan_units(char *s, uint64_t *n, units *m) {
 }
 
 char *format_binary(long double n) {
-    return format_units(n, &binary_units, 2);
+    return format_units(n, &binary_units, 3);
 }
 
 char *format_metric(long double n) {
-    return format_units(n, &metric_units, 2);
+    return format_units(n, &metric_units, 3);
 }
 
 char *format_time_us(long double n) {

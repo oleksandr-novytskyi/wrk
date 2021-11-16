@@ -35,6 +35,8 @@ typedef struct {
     uint64_t bytes;
     uint64_t start;
     uint64_t phase_normal_start;
+    uint64_t last_status;
+    uint64_t last_established;
     int phase;
     lua_State *L;
     errors errors;

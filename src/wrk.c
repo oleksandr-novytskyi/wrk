@@ -130,7 +130,7 @@ int main(int argc, char **argv) {
     cfg.host = host;
 
     // Split comma separated IPs list into the array.
-    char *local_ip_arr[32];
+    char *local_ip_arr[64];
     size_t local_ip_nr = 0;
     char *local_ip_tokens = cfg.local_ip != NULL ? strdup(cfg.local_ip) : NULL;
     if (local_ip_tokens != NULL) {
@@ -275,8 +275,8 @@ static void phase_move(thread *thread, int phase) {
     if (thread->phase == PHASE_WARMUP && phase == PHASE_NORMAL) {
         connection *c  = thread->cs;
 
-        printf("Warmup phase is ended (thread=%p, duration=%"PRIu64"sec).\n",
-               thread, (time_us() - thread->start) / 1000000UL);
+        printf("Warmup phase is ended (thread=%p, duration=%"PRIu64"sec, established=%u/%lu).\n",
+               thread, (time_us() - thread->start) / 1000000UL, thread->errors.established, thread->connections);
 
         for (uint64_t i = 0; i < thread->connections; i++, c++) {
             if (c->is_connected) {
@@ -349,6 +349,7 @@ void *thread_main(void *arg) {
     }
 
     thread->start = time_us();
+    thread->last_status = time_us();
     thread->phase = cfg.warmup ? PHASE_WARMUP : PHASE_NORMAL;
     aeMain(loop);
 
@@ -546,16 +547,23 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
             return;
     }
 
+    if (c->is_connected) {
+        return;
+    }
+
     http_parser_init(&c->parser, HTTP_RESPONSE);
     c->written = 0;
     c->thread->errors.established++;
     c->is_connected = true;
 
-    // Create file events only in NORMAL phase. We create the events for connected
-    // sockets when move from WARMUP to NORMAL phase.
-    if (c->thread->phase == PHASE_NORMAL) {
-        aeCreateFileEvent(c->thread->loop, fd, AE_READABLE, socket_readable, c);
-        aeCreateFileEvent(c->thread->loop, fd, AE_WRITABLE, socket_writeable, c);
+    uint64_t now_us = time_us();
+    uint64_t duration_us = now_us - c->thread->last_status;
+    if (duration_us > 5*1000000) {
+        uint64_t delta = c->thread->errors.established - c->thread->last_established;
+        printf("Socket has been connected (thread=%p, duration=%"PRIu64"sec, established=%u/%lu, delta=%lu).\n",
+               c->thread, duration_us / 1000000UL, c->thread->errors.established, c->thread->connections, delta);
+        c->thread->last_status = now_us;
+        c->thread->last_established = c->thread->errors.established;
     }
 
     if (cfg.warmup && c->thread->errors.established == c->thread->connections) {
@@ -564,6 +572,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
         // TLS handshakes and requests.
         aeCreateTimeEvent(c->thread->loop, THREAD_SYNC_INTERVAL_MS, inter_thread_sync, c->thread, NULL);
         int counter = __sync_add_and_fetch(&g_ready_threads, 1);
+        printf("Thread %p is ready (%i/%lu)\n", c->thread, counter, cfg.threads);
         if (counter == cfg.threads) {
             g_is_ready = 1;
         }
